@@ -131,4 +131,11 @@ describe("matchKeywords — edge cases", () => {
     const result = matchKeywords("I want more info please", ["more info"], true);
     expect(result.matched).toBe(true);
   });
+
+  it("should correctly match Cyrillic / Russian keywords", () => {
+    expect(matchKeywords("Хочу тикток ссылку", ["тикток"], true).matched).toBe(true);
+    expect(matchKeywords("Дай ССЫЛКУ пж", ["ссылку"], true).matched).toBe(true);
+    expect(matchKeywords("хочу купить!", ["купить"], true).matched).toBe(true);
+    expect(matchKeywords("🔥 ТИКТОК 🔥", ["тикток"], true).matched).toBe(true);
+  });
 });

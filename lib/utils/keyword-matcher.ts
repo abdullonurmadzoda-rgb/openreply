@@ -17,14 +17,18 @@ export interface KeywordMatchResult {
  * Strip emojis and special characters from text, keeping only
  * alphanumeric characters and whitespace.
  */
+/**
+ * Strip emojis and special characters from text, keeping only
+ * Unicode alphanumeric characters and whitespace.
+ */
 export function stripSpecialCharacters(text: string): string {
-  // Remove emoji ranges and other special unicode chars
+  // Remove emoji ranges and other special unicode chars, keep all letters (\p{L}) and numbers (\p{N})
   return text
     .replace(
       /[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{FE00}-\u{FE0F}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{200D}\u{20E3}]/gu,
       ""
     )
-    .replace(/[^\w\s]/g, " ")
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -59,12 +63,12 @@ export function matchKeywords(
     if (!cleanedKeyword) continue;
 
     if (wholeWordMatch) {
-      // Build a regex for whole-word matching
       const escapedKeyword = cleanedKeyword.replace(
         /[.*+?^${}()|[\]\\]/g,
         "\\$&"
       );
-      const regex = new RegExp(`\\b${escapedKeyword}\\b`, "i");
+      // Use Unicode-aware word boundary matching (supports Cyrillic, Latin, etc.)
+      const regex = new RegExp(`(?<=^|\\s)${escapedKeyword}(?=$|\\s)`, "iu");
       if (regex.test(cleanedText)) {
         return { matched: true, matchedKeyword: keyword };
       }
@@ -78,3 +82,4 @@ export function matchKeywords(
 
   return { matched: false, matchedKeyword: null };
 }
+
