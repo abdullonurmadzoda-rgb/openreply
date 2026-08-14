@@ -183,9 +183,9 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
   const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
   const [recordedBlobUrl, setRecordedBlobUrl] = useState<string | null>(null);
 
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaRecorderRef = useRef<any>(null);
   const audioChunksRef = useRef<Blob[]>([]);
-  const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const startRecording = async () => {
     try {
