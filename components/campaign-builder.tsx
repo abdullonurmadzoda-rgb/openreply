@@ -12,7 +12,7 @@
  * follow / email / follow-up steps arrive in later turns.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import AccountSelect, { type AccountOption } from "@/components/account-select";
 import PostPicker from "@/components/post-picker";
@@ -38,6 +38,9 @@ interface LoadedCampaign {
   matchAnyWord: boolean;
   dmTriggerEnabled: boolean;
   dmMessage: string;
+  imageUrl?: string | null;
+  videoUrl?: string | null;
+  audioUrl?: string | null;
   openingDmEnabled: boolean;
   openingDmMessage: string | null;
   openingDmButtonLabel: string | null;
@@ -167,6 +170,149 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
   const [openingDmButtonLabel, setOpeningDmButtonLabel] = useState("");
 
   const [dmMessage, setDmMessage] = useState("");
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const [uploadingVideo, setUploadingVideo] = useState(false);
+  const [uploadingAudio, setUploadingAudio] = useState(false);
+
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
+  const [recordedBlobUrl, setRecordedBlobUrl] = useState<string | null>(null);
+
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const startRecording = async () => {
+    try {
+      setError(null);
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioChunksRef.current = [];
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          audioChunksRef.current.push(e.data);
+        }
+      };
+
+      mediaRecorder.onstop = () => {
+        const audioBlob = new Blob(audioChunksRef.current, {
+          type: mediaRecorder.mimeType || "audio/webm",
+        });
+        setRecordedBlob(audioBlob);
+        const url = URL.createObjectURL(audioBlob);
+        setRecordedBlobUrl(url);
+        stream.getTracks().forEach((track) => track.stop());
+      };
+
+      mediaRecorder.start();
+      setIsRecording(true);
+      setRecordingSeconds(0);
+
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingSeconds((prev) => prev + 1);
+      }, 1000);
+    } catch {
+      setError("Не удалось получить доступ к микрофону для записи голоса.");
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+      }
+    }
+  };
+
+  const uploadFile = async (file: File | Blob, filename: string): Promise<string | null> => {
+    const formData = new FormData();
+    formData.append("file", file, filename);
+    const res = await fetch("/api/upload", {
+      method: "POST",
+      body: formData,
+    });
+    const data = await res.json();
+    if (data.success) {
+      return data.url;
+    } else {
+      setError(data.error || "Ошибка при загрузке файла");
+      return null;
+    }
+  };
+
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingImage(true);
+    setError(null);
+    try {
+      const url = await uploadFile(file, file.name);
+      if (url) setImageUrl(url);
+    } catch {
+      setError("Не удалось загрузить изображение.");
+    } finally {
+      setUploadingImage(false);
+    }
+  };
+
+  const handleVideoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingVideo(true);
+    setError(null);
+    try {
+      const url = await uploadFile(file, file.name);
+      if (url) setVideoUrl(url);
+    } catch {
+      setError("Не удалось загрузить видео.");
+    } finally {
+      setUploadingVideo(false);
+    }
+  };
+
+  const handleAudioFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingAudio(true);
+    setError(null);
+    try {
+      const url = await uploadFile(file, file.name);
+      if (url) setAudioUrl(url);
+    } catch {
+      setError("Не удалось загрузить аудио файл.");
+    } finally {
+      setUploadingAudio(false);
+    }
+  };
+
+  const uploadRecordedVoice = async () => {
+    if (!recordedBlob) return;
+    setUploadingAudio(true);
+    setError(null);
+    try {
+      const ext = recordedBlob.type.includes("mp4") ? "m4a" : "webm";
+      const url = await uploadFile(recordedBlob, `voice-recording.${ext}`);
+      if (url) {
+        setAudioUrl(url);
+        setRecordedBlob(null);
+        setRecordedBlobUrl(null);
+      }
+    } catch {
+      setError("Не удалось сохранить голосовое сообщение.");
+    } finally {
+      setUploadingAudio(false);
+    }
+  };
   const [linkOpen, setLinkOpen] = useState(false);
   const [trackedDestinationUrl, setTrackedDestinationUrl] = useState("");
   const [linkButtonLabel, setLinkButtonLabel] = useState("Open link");
@@ -271,6 +417,9 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
         setOpeningDmMessage(c.openingDmMessage ?? "");
         setOpeningDmButtonLabel(c.openingDmButtonLabel ?? "");
         setDmMessage(c.dmMessage);
+        setImageUrl(c.imageUrl ?? null);
+        setVideoUrl(c.videoUrl ?? null);
+        setAudioUrl(c.audioUrl ?? null);
         setLinkButtonLabel(c.linkButtonLabel ?? "Open link");
         setIsActive(c.isActive);
         const link = c.trackedLinks?.[0]?.destinationUrl ?? "";
@@ -408,6 +557,9 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
       keywords: matchMode === "any" ? [] : keywords,
       dmTriggerEnabled,
       dmMessage,
+      imageUrl: imageUrl?.trim() || null,
+      videoUrl: videoUrl?.trim() || null,
+      audioUrl: audioUrl?.trim() || null,
       openingDmEnabled,
       openingDmMessage: openingDmEnabled ? openingDmMessage : null,
       openingDmButtonLabel: openingDmEnabled ? openingDmButtonLabel : null,
@@ -928,6 +1080,160 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
               {"{link}"} inserts the tracked link; {"{username}"} personalizes.
             </p>
           </div>
+
+          {/* Media Attachments Section: Voice, Image, Video */}
+          <div className="mt-3 rounded-lg border border-border p-3 space-y-3">
+            <span className="text-sm font-semibold text-foreground">
+              Вложения (Голосовое, Фото, Видео)
+            </span>
+            <p className="text-xs text-muted">
+              Добавьте голосовое сообщение, фото или видео из галереи, которое бот отправит подписчику в личку.
+            </p>
+
+            {/* Voice Recording / Audio */}
+            <div className="rounded-lg border border-border/80 bg-surface/50 p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                  🎙️ Голосовое сообщение
+                </span>
+                {audioUrl && (
+                  <button
+                    type="button"
+                    onClick={() => setAudioUrl(null)}
+                    className="text-xs text-error hover:underline"
+                  >
+                    Удалить голос
+                  </button>
+                )}
+              </div>
+
+              {audioUrl ? (
+                <div className="space-y-1">
+                  <audio controls src={audioUrl} className="w-full h-8" />
+                  <p className="text-[11px] text-success">✓ Голосовое сообщение прикреплено</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {!isRecording ? (
+                      <button
+                        type="button"
+                        onClick={startRecording}
+                        disabled={uploadingAudio}
+                        className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-white hover:bg-accent-hover disabled:opacity-50"
+                      >
+                        🔴 Записать голос
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={stopRecording}
+                        className="flex items-center gap-1.5 rounded-md bg-error px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 animate-pulse"
+                      >
+                        ⏹ Стоп ({recordingSeconds}с)
+                      </button>
+                    )}
+
+                    <label className="cursor-pointer rounded-md border border-border px-3 py-1.5 text-xs font-medium text-muted hover:text-foreground">
+                      {uploadingAudio ? "Загрузка…" : "📁 Загрузить файл аудио"}
+                      <input
+                        type="file"
+                        accept="audio/*"
+                        onChange={handleAudioFileUpload}
+                        disabled={uploadingAudio || isRecording}
+                        className="hidden"
+                      />
+                    </label>
+                  </div>
+
+                  {recordedBlobUrl && !audioUrl && (
+                    <div className="space-y-1.5 rounded bg-surface p-2 border border-border">
+                      <p className="text-xs font-medium text-foreground">Предпросмотр записи:</p>
+                      <audio controls src={recordedBlobUrl} className="w-full h-8" />
+                      <button
+                        type="button"
+                        onClick={uploadRecordedVoice}
+                        disabled={uploadingAudio}
+                        className="rounded bg-success px-3 py-1 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50"
+                      >
+                        {uploadingAudio ? "Сохранение…" : "Сохранить голосовое"}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Photo Attachment */}
+            <div className="rounded-lg border border-border/80 bg-surface/50 p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                  🖼️ Фото из галереи
+                </span>
+                {imageUrl && (
+                  <button
+                    type="button"
+                    onClick={() => setImageUrl(null)}
+                    className="text-xs text-error hover:underline"
+                  >
+                    Удалить фото
+                  </button>
+                )}
+              </div>
+
+              {imageUrl ? (
+                <div className="relative w-24 h-24 rounded border border-border overflow-hidden bg-black/5">
+                  <img src={imageUrl} alt="Campaign photo" className="w-full h-full object-cover" />
+                </div>
+              ) : (
+                <label className="inline-block cursor-pointer rounded-md border border-border px-3 py-1.5 text-xs font-medium text-muted hover:text-foreground">
+                  {uploadingImage ? "Загрузка фото…" : "+ Выбрать фото из галереи"}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleImageUpload}
+                    disabled={uploadingImage}
+                    className="hidden"
+                  />
+                </label>
+              )}
+            </div>
+
+            {/* Video Attachment */}
+            <div className="rounded-lg border border-border/80 bg-surface/50 p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                  🎬 Видео из галереи
+                </span>
+                {videoUrl && (
+                  <button
+                    type="button"
+                    onClick={() => setVideoUrl(null)}
+                    className="text-xs text-error hover:underline"
+                  >
+                    Удалить видео
+                  </button>
+                )}
+              </div>
+
+              {videoUrl ? (
+                <div className="relative w-44 rounded border border-border overflow-hidden bg-black">
+                  <video src={videoUrl} controls className="w-full max-h-32 object-contain" />
+                </div>
+              ) : (
+                <label className="inline-block cursor-pointer rounded-md border border-border px-3 py-1.5 text-xs font-medium text-muted hover:text-foreground">
+                  {uploadingVideo ? "Загрузка видео…" : "+ Выбрать видео из галереи"}
+                  <input
+                    type="file"
+                    accept="video/*"
+                    onChange={handleVideoUpload}
+                    disabled={uploadingVideo}
+                    className="hidden"
+                  />
+                </label>
+              )}
+            </div>
+          </div>
           <div className="mt-3 rounded-lg border border-border p-3">
             <div className="flex items-center justify-between">
               <span className="text-sm text-foreground">
@@ -998,6 +1304,9 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
             openingDmMessage={openingDmMessage}
             openingDmButtonLabel={openingDmButtonLabel}
             revealMessage={dmMessage}
+            imageUrl={imageUrl}
+            videoUrl={videoUrl}
+            audioUrl={audioUrl}
             hasLink={Boolean(trackedDestinationUrl.trim())}
             linkButtonLabel={linkButtonLabel || "Open link"}
             linkUrl={trackedDestinationUrl.trim() || undefined}

@@ -24,6 +24,8 @@ import {
   sendPrivateReply,
   sendPrivateReplyWithButton,
   sendPrivateReplyWithLinkButton,
+  sendPrivateReplyWithAttachment,
+  sendDirectMessageWithAttachment,
 } from "@/lib/meta/client";
 import { decryptToken } from "@/lib/meta/oauth";
 import { matchKeywords } from "@/lib/utils/keyword-matcher";
@@ -109,11 +111,71 @@ function buildInlineLinkFallback(
   return extraUrls.length > 0 ? `${base}\n${extraUrls.join("\n")}` : base;
 }
 
+function resolveAbsoluteMediaUrl(url: string): string {
+  if (url.startsWith("http://") || url.startsWith("https://")) return url;
+  const baseUrl =
+    process.env.APP_URL || process.env.NEXTAUTH_URL || "http://localhost:3000";
+  const cleanBase = baseUrl.replace(/\/$/, "");
+  const cleanPath = url.startsWith("/") ? url : `/${url}`;
+  return `${cleanBase}${cleanPath}`;
+}
+
+async function sendMediaAttachments(
+  accessToken: string,
+  instagramAccountId: string,
+  userId: string,
+  automation: {
+    imageUrl?: string | null;
+    videoUrl?: string | null;
+    audioUrl?: string | null;
+  }
+): Promise<void> {
+  const mediaList: { type: "image" | "video" | "audio"; url: string }[] = [];
+  if (automation.imageUrl) {
+    mediaList.push({
+      type: "image",
+      url: resolveAbsoluteMediaUrl(automation.imageUrl),
+    });
+  }
+  if (automation.videoUrl) {
+    mediaList.push({
+      type: "video",
+      url: resolveAbsoluteMediaUrl(automation.videoUrl),
+    });
+  }
+  if (automation.audioUrl) {
+    mediaList.push({
+      type: "audio",
+      url: resolveAbsoluteMediaUrl(automation.audioUrl),
+    });
+  }
+
+  for (const media of mediaList) {
+    try {
+      await sendDirectMessageWithAttachment(
+        accessToken,
+        instagramAccountId,
+        userId,
+        media.type,
+        media.url
+      );
+    } catch (err) {
+      console.error(
+        `[DM Worker] Failed to send ${media.type} attachment to ${userId}:`,
+        formatError(err)
+      );
+    }
+  }
+}
+
 type RevealAutomation = {
   dmMessage: string;
   linkButtonLabel: string | null;
   trackedLinks: WorkerTrackedLink[];
   instagramAccount: { instagramId: string };
+  imageUrl?: string | null;
+  videoUrl?: string | null;
+  audioUrl?: string | null;
 };
 
 /**
@@ -139,53 +201,60 @@ async function sendRevealDirectMessage(
         trackedLinks: automation.trackedLinks,
       })
     );
-    return;
-  }
-
-  // Try button template first; if Meta rejects it, fall back to inline links.
-  const bodyText =
-    renderMessageWithoutLink({
-      message: automation.dmMessage,
-      commenterName,
-    }) || "Here's your link:";
-  const buttons = buildLinkButtons(
-    automation.trackedLinks,
-    automation.linkButtonLabel
-  );
-
-  try {
-    await sendDirectMessageWithLinkButton(
-      accessToken,
-      automation.instagramAccount.instagramId,
-      userId,
-      bodyText,
-      buttons
+  } else {
+    // Try button template first; if Meta rejects it, fall back to inline links.
+    const bodyText =
+      renderMessageWithoutLink({
+        message: automation.dmMessage,
+        commenterName,
+      }) || "Here's your link:";
+    const buttons = buildLinkButtons(
+      automation.trackedLinks,
+      automation.linkButtonLabel
     );
-  } catch (buttonError) {
-    // A closed messaging window rejects the text retry too, so don't let it
-    // overwrite the original error with a misleading one.
-    if (!isTemplateRejection(buttonError)) throw buttonError;
 
-    console.log(
-      `[DM Worker] Button template rejected in ${context}, falling back to inline link:`,
-      formatError(buttonError)
-    );
     try {
-      await sendDirectMessage(
+      await sendDirectMessageWithLinkButton(
         accessToken,
         automation.instagramAccount.instagramId,
         userId,
-        buildInlineLinkFallback(
-          automation.dmMessage,
-          commenterName,
-          automation.trackedLinks,
-          bodyText
-        )
+        bodyText,
+        buttons
       );
-    } catch {
-      throw buttonError;
+    } catch (buttonError) {
+      // A closed messaging window rejects the text retry too, so don't let it
+      // overwrite the original error with a misleading one.
+      if (!isTemplateRejection(buttonError)) throw buttonError;
+
+      console.log(
+        `[DM Worker] Button template rejected in ${context}, falling back to inline link:`,
+        formatError(buttonError)
+      );
+      try {
+        await sendDirectMessage(
+          accessToken,
+          automation.instagramAccount.instagramId,
+          userId,
+          buildInlineLinkFallback(
+            automation.dmMessage,
+            commenterName,
+            automation.trackedLinks,
+            bodyText
+          )
+        );
+      } catch {
+        throw buttonError;
+      }
     }
   }
+
+  // Also deliver any media attachments (photo, video, voice note) configured for the campaign
+  await sendMediaAttachments(
+    accessToken,
+    automation.instagramAccount.instagramId,
+    userId,
+    automation
+  );
 }
 
 async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
@@ -635,6 +704,14 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
           dmMessage
         );
       }
+
+      // Also send any attached image, video, or audio voice note to commenterId
+      await sendMediaAttachments(
+        accessToken,
+        automation.instagramAccount.instagramId,
+        commenterId,
+        automation
+      );
 
       await prisma.dmLog.update({
         where: {

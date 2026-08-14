@@ -183,6 +183,9 @@ model Automation {
   // postId / matchAnyPost do not apply to it.
   dmTriggerEnabled Boolean @default(false)
   dmMessage      String
+  imageUrl       String?
+  videoUrl       String?
+  audioUrl       String?
   openingDmEnabled     Boolean @default(false)
   openingDmMessage     String?
   openingDmButtonLabel String?

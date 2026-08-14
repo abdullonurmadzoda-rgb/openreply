@@ -162,6 +162,72 @@ export async function sendPrivateReply(
 }
 
 /**
+ * Send a private reply to a comment containing a media attachment (image, video, or audio).
+ */
+export async function sendPrivateReplyWithAttachment(
+  accessToken: string,
+  instagramAccountId: string,
+  commentId: string,
+  type: "image" | "video" | "audio",
+  mediaUrl: string
+): Promise<{ recipient_id: string; message_id: string }> {
+  const response = await fetch(
+    `${instagramGraphBase()}/${instagramAccountId}/messages`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        recipient: { comment_id: commentId },
+        message: {
+          attachment: {
+            type,
+            payload: { url: mediaUrl },
+          },
+        },
+      }),
+    }
+  );
+
+  return handleResponse(response);
+}
+
+/**
+ * Send a direct message to a user by ID containing a media attachment (image, video, or audio).
+ */
+export async function sendDirectMessageWithAttachment(
+  accessToken: string,
+  instagramAccountId: string,
+  userId: string,
+  type: "image" | "video" | "audio",
+  mediaUrl: string
+): Promise<{ recipient_id: string; message_id: string }> {
+  const response = await fetch(
+    `${instagramGraphBase()}/${instagramAccountId}/messages`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        recipient: { id: userId },
+        message: {
+          attachment: {
+            type,
+            payload: { url: mediaUrl },
+          },
+        },
+      }),
+    }
+  );
+
+  return handleResponse(response);
+}
+
+/**
  * Send a private reply to a comment as a button template — an opening message
  * plus a postback button. Tapping the button opens the conversation and fires
  * a `messaging_postbacks` webhook carrying `payload`, which we use to deliver

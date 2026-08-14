@@ -29,6 +29,9 @@ interface CampaignPreviewProps {
   openingDmMessage: string;
   openingDmButtonLabel: string;
   revealMessage: string;
+  imageUrl?: string | null;
+  videoUrl?: string | null;
+  audioUrl?: string | null;
   hasLink: boolean;
   linkButtonLabel: string;
   linkUrl?: string;
@@ -329,6 +332,9 @@ function DmScreen({
   openingDmMessage: string;
   openingDmButtonLabel: string;
   revealMessage: string;
+  imageUrl?: string | null;
+  videoUrl?: string | null;
+  audioUrl?: string | null;
   hasLink: boolean;
   linkButtonLabel: string;
   linkUrl?: string;
@@ -439,6 +445,31 @@ function DmScreen({
             </div>
           );
         })()}
+        {imageUrl && (
+          <div className="flex items-end gap-2">
+            <Avatar url={avatarUrl} size={24} />
+            <div className="max-w-[80%] overflow-hidden rounded-2xl rounded-bl-md border border-zinc-700 bg-zinc-800">
+              <img src={imageUrl} alt="Photo attachment" className="w-full max-h-40 object-cover" />
+            </div>
+          </div>
+        )}
+        {videoUrl && (
+          <div className="flex items-end gap-2">
+            <Avatar url={avatarUrl} size={24} />
+            <div className="max-w-[80%] overflow-hidden rounded-2xl rounded-bl-md border border-zinc-700 bg-zinc-800">
+              <video src={videoUrl} controls className="w-full max-h-40 object-contain" />
+            </div>
+          </div>
+        )}
+        {audioUrl && (
+          <div className="flex items-end gap-2">
+            <Avatar url={avatarUrl} size={24} />
+            <div className="max-w-[80%] overflow-hidden rounded-2xl rounded-bl-md bg-zinc-800 p-2.5 flex items-center gap-2">
+              <span className="text-base">🎙️</span>
+              <audio controls src={audioUrl} className="w-44 h-7" />
+            </div>
+          </div>
+        )}
         {followUpEnabled && (
           <>
             {followUpDelayMinutes > 0 && (
@@ -516,6 +547,9 @@ export default function CampaignPreview(props: CampaignPreviewProps) {
             openingDmMessage={props.openingDmMessage}
             openingDmButtonLabel={props.openingDmButtonLabel}
             revealMessage={props.revealMessage}
+            imageUrl={props.imageUrl}
+            videoUrl={props.videoUrl}
+            audioUrl={props.audioUrl}
             hasLink={props.hasLink}
             linkButtonLabel={props.linkButtonLabel}
             hasSecondLink={props.hasSecondLink}
@@ -538,6 +572,9 @@ export default function CampaignPreview(props: CampaignPreviewProps) {
             openingDmMessage=""
             openingDmButtonLabel=""
             revealMessage={props.revealMessage}
+            imageUrl={props.imageUrl}
+            videoUrl={props.videoUrl}
+            audioUrl={props.audioUrl}
             hasLink={props.hasLink}
             linkButtonLabel={props.linkButtonLabel}
             hasSecondLink={props.hasSecondLink}
