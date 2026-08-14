@@ -24,6 +24,9 @@ interface Campaign {
   matchAnyWord: boolean;
   dmTriggerEnabled: boolean;
   dmMessage: string;
+  imageUrl?: string | null;
+  videoUrl?: string | null;
+  audioUrl?: string | null;
   openingDmEnabled: boolean;
   openingDmMessage: string | null;
   openingDmButtonLabel: string | null;
@@ -353,6 +356,9 @@ export default function CampaignDetailPage() {
             openingDmMessage={campaign.openingDmMessage ?? ""}
             openingDmButtonLabel={campaign.openingDmButtonLabel ?? ""}
             revealMessage={campaign.dmMessage}
+            imageUrl={campaign.imageUrl}
+            videoUrl={campaign.videoUrl}
+            audioUrl={campaign.audioUrl}
             hasLink={hasLink}
             linkButtonLabel={campaign.linkButtonLabel ?? "Open link"}
             linkUrl={
