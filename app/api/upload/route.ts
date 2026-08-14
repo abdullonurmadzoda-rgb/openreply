@@ -35,6 +35,51 @@ function getFileExtension(filename: string, mimeType: string): string {
   return ".bin";
 }
 
+async function uploadToCatbox(file: File): Promise<string | null> {
+  try {
+    const formData = new FormData();
+    formData.append("reqtype", "fileupload");
+    formData.append("fileToUpload", file, file.name || "upload");
+
+    const response = await fetch("https://catbox.moe/user/api.php", {
+      method: "POST",
+      body: formData,
+    });
+
+    if (response.ok) {
+      const text = (await response.text()).trim();
+      if (text.startsWith("http://") || text.startsWith("https://")) {
+        return text;
+      }
+    }
+  } catch (err) {
+    console.warn("[Upload API] Catbox upload failed:", err);
+  }
+  return null;
+}
+
+async function uploadToTmpfiles(file: File): Promise<string | null> {
+  try {
+    const formData = new FormData();
+    formData.append("file", file, file.name || "upload");
+
+    const response = await fetch("https://tmpfiles.org/api/v1/upload", {
+      method: "POST",
+      body: formData,
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      if (data?.status === "success" && data?.data?.url) {
+        return data.data.url.replace("tmpfiles.org/", "tmpfiles.org/dl/");
+      }
+    }
+  } catch (err) {
+    console.warn("[Upload API] Tmpfiles upload failed:", err);
+  }
+  return null;
+}
+
 export async function POST(request: NextRequest) {
   const context = await getCurrentWorkspaceContext();
   if (!context) {
@@ -75,23 +120,43 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const extension = getFileExtension(file.name, mimeType);
-    const uniqueFilename = `${crypto.randomUUID()}${extension}`;
+    // 1. Try public cloud CDN storage (catbox) which works on serverless Vercel
+    let publicUrl = await uploadToCatbox(file);
 
-    const uploadsDir = path.join(process.cwd(), "public", "uploads");
-    await fs.mkdir(uploadsDir, { recursive: true });
+    // 2. Fallback to tmpfiles CDN if catbox is unavailable
+    if (!publicUrl) {
+      publicUrl = await uploadToTmpfiles(file);
+    }
 
-    const filePath = path.join(uploadsDir, uniqueFilename);
-    const arrayBuffer = await file.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
+    // 3. If running on local server where filesystem is writable, save to public/uploads
+    if (!publicUrl) {
+      try {
+        const extension = getFileExtension(file.name, mimeType);
+        const uniqueFilename = `${crypto.randomUUID()}${extension}`;
+        const uploadsDir = path.join(process.cwd(), "public", "uploads");
+        await fs.mkdir(uploadsDir, { recursive: true });
 
-    await fs.writeFile(filePath, buffer);
+        const filePath = path.join(uploadsDir, uniqueFilename);
+        const arrayBuffer = await file.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
 
-    const relativeUrl = `/uploads/${uniqueFilename}`;
+        await fs.writeFile(filePath, buffer);
+        publicUrl = `/uploads/${uniqueFilename}`;
+      } catch (localErr) {
+        console.warn("[Upload API] Local filesystem save failed (read-only):", localErr);
+      }
+    }
+
+    if (!publicUrl) {
+      return NextResponse.json(
+        { success: false, error: "Не удалось сохранить файл. Попробуйте еще раз." },
+        { status: 500 }
+      );
+    }
 
     return NextResponse.json({
       success: true,
-      url: relativeUrl,
+      url: publicUrl,
       type: mediaType,
       filename: file.name,
       size: file.size,
