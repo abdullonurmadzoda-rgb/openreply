@@ -217,7 +217,10 @@ export async function sendDirectMessageWithAttachment(
         message: {
           attachment: {
             type,
-            payload: { url: mediaUrl },
+            payload: {
+              url: mediaUrl,
+              is_reusable: true,
+            },
           },
         },
       }),

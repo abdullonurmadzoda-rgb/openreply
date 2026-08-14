@@ -235,6 +235,28 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
   };
 
   const uploadFile = async (file: File | Blob, filename: string): Promise<string | null> => {
+    // 1. Try direct client upload to Catbox CDN to bypass Vercel 4.5MB serverless limit (especially for videos)
+    try {
+      const catboxForm = new FormData();
+      catboxForm.append("reqtype", "fileupload");
+      catboxForm.append("fileToUpload", file, filename);
+
+      const catboxRes = await fetch("https://catbox.moe/user/api.php", {
+        method: "POST",
+        body: catboxForm,
+      });
+
+      if (catboxRes.ok) {
+        const text = (await catboxRes.text()).trim();
+        if (text.startsWith("http://") || text.startsWith("https://")) {
+          return text;
+        }
+      }
+    } catch (e) {
+      console.warn("Direct CDN upload failed, falling back to /api/upload:", e);
+    }
+
+    // 2. Fallback to /api/upload
     const formData = new FormData();
     formData.append("file", file, filename);
     const res = await fetch("/api/upload", {
