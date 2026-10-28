@@ -35,6 +35,78 @@ function getFileExtension(filename: string, mimeType: string): string {
   return ".bin";
 }
 
+async function uploadToTelegraph(file: File): Promise<string | null> {
+  try {
+    if (!file.type.startsWith("image/")) return null;
+    const formData = new FormData();
+    formData.append("file", file, file.name || "upload.jpg");
+
+    const response = await fetch("https://telegra.ph/upload", {
+      method: "POST",
+      body: formData,
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      if (Array.isArray(data) && data[0]?.src) {
+        return `https://telegra.ph${data[0].src}`;
+      }
+    }
+  } catch (err) {
+    console.warn("[Upload API] Telegraph upload failed:", err);
+  }
+  return null;
+}
+
+async function uploadToPixeldrain(file: File): Promise<string | null> {
+  try {
+    const formData = new FormData();
+    formData.append("file", file, file.name || "upload");
+
+    const response = await fetch("https://pixeldrain.com/api/file", {
+      method: "POST",
+      body: formData,
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      if (data?.success && data?.id) {
+        return `https://pixeldrain.com/api/file/${data.id}`;
+      }
+    }
+  } catch (err) {
+    console.warn("[Upload API] Pixeldrain upload failed:", err);
+  }
+  return null;
+}
+
+async function uploadToLitterbox(file: File): Promise<string | null> {
+  try {
+    const formData = new FormData();
+    formData.append("reqtype", "fileupload");
+    formData.append("time", "72h");
+    formData.append("fileToUpload", file, file.name || "upload");
+
+    const response = await fetch(
+      "https://litterbox.catbox.moe/resources/internals/api.php",
+      {
+        method: "POST",
+        body: formData,
+      }
+    );
+
+    if (response.ok) {
+      const text = (await response.text()).trim();
+      if (text.startsWith("http://") || text.startsWith("https://")) {
+        return text;
+      }
+    }
+  } catch (err) {
+    console.warn("[Upload API] Litterbox upload failed:", err);
+  }
+  return null;
+}
+
 async function uploadToCatbox(file: File): Promise<string | null> {
   try {
     const formData = new FormData();
@@ -120,15 +192,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 1. Try public cloud CDN storage (catbox) which works on serverless Vercel
-    let publicUrl = await uploadToCatbox(file);
+    // Try cloud CDN storage providers in priority order for guaranteed public access
+    let publicUrl = await uploadToTelegraph(file);
+    if (!publicUrl) publicUrl = await uploadToPixeldrain(file);
+    if (!publicUrl) publicUrl = await uploadToLitterbox(file);
+    if (!publicUrl) publicUrl = await uploadToTmpfiles(file);
+    if (!publicUrl) publicUrl = await uploadToCatbox(file);
 
-    // 2. Fallback to tmpfiles CDN if catbox is unavailable
-    if (!publicUrl) {
-      publicUrl = await uploadToTmpfiles(file);
-    }
-
-    // 3. If running on local server where filesystem is writable, save to public/uploads
+    // Fallback: local filesystem if filesystem is writable
     if (!publicUrl) {
       try {
         const extension = getFileExtension(file.name, mimeType);
@@ -143,7 +214,7 @@ export async function POST(request: NextRequest) {
         await fs.writeFile(filePath, buffer);
         publicUrl = `/uploads/${uniqueFilename}`;
       } catch (localErr) {
-        console.warn("[Upload API] Local filesystem save failed (read-only):", localErr);
+        console.warn("[Upload API] Local filesystem save failed:", localErr);
       }
     }
 

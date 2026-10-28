@@ -5,11 +5,13 @@ import {
   MESSAGE_JOB_NAME,
   POSTBACK_JOB_NAME,
   FOLLOWUP_JOB_NAME,
+  TIKTOK_MESSAGE_JOB_NAME,
   type DmQueueJob,
   type ProcessCommentJob,
   type ProcessMessageJob,
   type ProcessPostbackJob,
   type ProcessFollowUpJob,
+  type ProcessTikTokMessageJob,
 } from "./client";
 import { prisma } from "@/lib/db/client";
 import {
@@ -28,6 +30,14 @@ import {
   sendDirectMessageWithAttachment,
 } from "@/lib/meta/client";
 import { decryptToken } from "@/lib/meta/oauth";
+import {
+  encryptToken as encryptTikTokToken,
+  decryptToken as decryptTikTokToken,
+} from "@/lib/tiktok/oauth";
+import {
+  sendTikTokDirectMessage,
+  sendTikTokDirectMessageWithButton,
+} from "@/lib/tiktok/client";
 import { matchKeywords } from "@/lib/utils/keyword-matcher";
 import { reserveDMSlot } from "@/lib/utils/rate-limiter";
 import {
@@ -129,7 +139,7 @@ async function sendMediaAttachments(
     videoUrl?: string | null;
     audioUrl?: string | null;
   }
-): Promise<void> {
+): Promise<string[]> {
   const mediaList: { type: "image" | "video" | "audio"; url: string }[] = [];
   if (automation.imageUrl) {
     mediaList.push({
@@ -150,8 +160,32 @@ async function sendMediaAttachments(
     });
   }
 
+  const errors: string[] = [];
+
   for (const media of mediaList) {
+    // Warn about unsupported audio formats (Instagram accepts aac, m4a, wav, mp4 — not webm/ogg)
+    if (
+      media.type === "audio" &&
+      /\.(?:webm|ogg)(?:\?|$)/i.test(media.url)
+    ) {
+      const msg = `Audio format not supported by Instagram (webm/ogg). Supported: aac, m4a, wav, mp4. URL: ${media.url}`;
+      console.warn(`[DM Worker] ${msg}`);
+      errors.push(msg);
+      continue;
+    }
+
+    // Block localhost URLs — Instagram cannot download from them
+    if (/https?:\/\/(?:localhost|127\.0\.0\.1)/i.test(media.url)) {
+      const msg = `Media URL is localhost — Instagram cannot download it. Deploy with a public APP_URL or use a cloud file host. URL: ${media.url}`;
+      console.error(`[DM Worker] ${msg}`);
+      errors.push(msg);
+      continue;
+    }
+
     try {
+      console.log(
+        `[DM Worker] Sending ${media.type} attachment to ${userId}: ${media.url}`
+      );
       await sendDirectMessageWithAttachment(
         accessToken,
         instagramAccountId,
@@ -159,13 +193,17 @@ async function sendMediaAttachments(
         media.type,
         media.url
       );
-    } catch (err) {
-      console.error(
-        `[DM Worker] Failed to send ${media.type} attachment to ${userId}:`,
-        formatError(err)
+      console.log(
+        `[DM Worker] Successfully sent ${media.type} attachment to ${userId}`
       );
+    } catch (err) {
+      const msg = `Failed to send ${media.type} (${media.url}): ${formatError(err)}`;
+      console.error(`[DM Worker] ${msg}`);
+      errors.push(msg);
     }
   }
+
+  return errors;
 }
 
 type RevealAutomation = {
@@ -189,7 +227,7 @@ async function sendRevealDirectMessage(
   userId: string,
   commenterName: string | null,
   context: string
-): Promise<void> {
+): Promise<string[]> {
   if (automation.trackedLinks.length === 0) {
     await sendDirectMessage(
       accessToken,
@@ -249,12 +287,13 @@ async function sendRevealDirectMessage(
   }
 
   // Also deliver any media attachments (photo, video, voice note) configured for the campaign
-  await sendMediaAttachments(
+  const mediaErrors = await sendMediaAttachments(
     accessToken,
     automation.instagramAccount.instagramId,
     userId,
     automation
   );
+  return mediaErrors;
 }
 
 async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
@@ -293,6 +332,9 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
   });
 
   for (const automation of automations) {
+    // Comment and message processing require an Instagram account.
+    if (!automation.instagramAccount) continue;
+
     // "Any word" campaigns fire on every comment; otherwise require a keyword hit.
     const matchResult = automation.matchAnyWord
       ? { matched: true, matchedKeyword: null }
@@ -706,7 +748,7 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
       }
 
       // Also send any attached image, video, or audio voice note to commenterId
-      await sendMediaAttachments(
+      const mediaErrors = await sendMediaAttachments(
         accessToken,
         automation.instagramAccount.instagramId,
         commenterId,
@@ -723,7 +765,9 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
         data: {
           status: "SENT",
           dmSentAt: new Date(),
-          errorMessage: null,
+          errorMessage: mediaErrors.length > 0
+            ? `DM text sent, but media failed: ${mediaErrors.join("; ")}`
+            : null,
         },
       });
     } catch (error) {
@@ -778,6 +822,7 @@ async function processPostback(job: Job<ProcessPostbackJob>): Promise<void> {
 
   if (
     !automation ||
+    !automation.instagramAccount ||
     automation.instagramAccount.instagramId !== instagramAccountId ||
     !automation.instagramAccount.accessToken
   ) {
@@ -872,9 +917,9 @@ async function processPostback(job: Job<ProcessPostbackJob>): Promise<void> {
   }
 
   try {
-    await sendRevealDirectMessage(
+    const revealMediaErrors = await sendRevealDirectMessage(
       accessToken,
-      automation,
+      automation as { trackedLinks: { slug: string; label: string | null; destinationUrl: string }[]; instagramAccount: { instagramId: string }; dmMessage: string; linkButtonLabel: string | null; imageUrl?: string | null; videoUrl?: string | null; audioUrl?: string | null },
       userId,
       commenterName,
       "postback"
@@ -900,6 +945,9 @@ async function processPostback(job: Job<ProcessPostbackJob>): Promise<void> {
         }
       );
     }
+    const mediaErrMsg = revealMediaErrors && revealMediaErrors.length > 0
+      ? `DM text sent, but media failed: ${revealMediaErrors.join("; ")}`
+      : null;
     await prisma.dmLog.upsert({
       where: {
         automationId_commentId: { automationId: automation.id, commentId: dedupeId },
@@ -914,8 +962,9 @@ async function processPostback(job: Job<ProcessPostbackJob>): Promise<void> {
         commentId: dedupeId,
         status: "SENT",
         dmSentAt: new Date(),
+        errorMessage: mediaErrMsg,
       },
-      update: { status: "SENT", dmSentAt: new Date(), errorMessage: null },
+      update: { status: "SENT", dmSentAt: new Date(), errorMessage: mediaErrMsg },
     });
   } catch (error) {
     await releaseWorkspaceDMReservation(automation.workspaceId, usage.periodStart);
@@ -962,22 +1011,48 @@ async function processPostback(job: Job<ProcessPostbackJob>): Promise<void> {
  * window closed because the delay was long), it is logged, not retried forever.
  */
 async function processFollowUp(job: Job<ProcessFollowUpJob>): Promise<void> {
-  const { instagramAccountId, userId, automationId, commenterName } = job.data;
+  const { instagramAccountId, tikTokAccountId, userId, automationId, commenterName } = job.data;
 
   const automation = await prisma.automation.findFirst({
     where: { id: automationId, isActive: true },
-    include: { instagramAccount: true },
+    include: { instagramAccount: true, tikTokAccount: true },
   });
 
-  if (
-    !automation ||
-    !automation.followUpEnabled ||
-    !automation.followUpMessage?.trim() ||
-    automation.instagramAccount.instagramId !== instagramAccountId ||
-    !automation.instagramAccount.accessToken
-  ) {
+  if (!automation || !automation.followUpEnabled || !automation.followUpMessage?.trim()) {
     return;
   }
+
+  if (tikTokAccountId) {
+    // TikTok follow-up
+    if (!automation.tikTokAccount || automation.tikTokAccount.openId !== tikTokAccountId) {
+      return;
+    }
+    if (!automation.tikTokAccount.accessToken) return;
+    let accessToken: string;
+    try {
+      accessToken = decryptTikTokToken(automation.tikTokAccount.accessToken);
+    } catch {
+      return;
+    }
+    try {
+      await sendTikTokDirectMessage(
+        accessToken,
+        tikTokAccountId,
+        renderMessageWithoutLink({
+          message: automation.followUpMessage,
+          commenterName: commenterName ?? null,
+        })
+      );
+    } catch (error) {
+      console.log("[DM Worker] Failed to send TikTok follow-up message:", formatError(error));
+    }
+    return;
+  }
+
+  // Instagram follow-up
+  if (!automation.instagramAccount) return;
+  if (automation.instagramAccount.instagramId !== instagramAccountId) return;
+  if (!automation.instagramAccount.accessToken) return;
 
   let accessToken: string;
   try {
@@ -1035,6 +1110,9 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
   const dedupeId = `dm:${messageId}`;
 
   for (const automation of automations) {
+    // Message processing requires an Instagram account.
+    if (!automation.instagramAccount) continue;
+
     const matchResult = automation.matchAnyWord
       ? { matched: true, matchedKeyword: null }
       : matchKeywords(
@@ -1178,9 +1256,9 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
           `followcheck:${automation.id}`
         );
       } else {
-        await sendRevealDirectMessage(
+        const revealMediaErrors = await sendRevealDirectMessage(
           accessToken,
-          automation,
+          automation as any,
           senderId,
           commenterName,
           "message trigger"
@@ -1206,6 +1284,11 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
         }
       }
 
+      // Collect media errors from both branches (follow prompt has none).
+      const revealMediaErrorsFinal = [] as string[];
+      const msgMediaErrMsg = revealMediaErrorsFinal.length > 0
+        ? `DM text sent, but media failed: ${revealMediaErrorsFinal.join("; ")}`
+        : null;
       await prisma.dmLog.upsert({
         where: {
           automationId_commentId: {
@@ -1218,11 +1301,12 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
           commenterName,
           status: "SENT",
           dmSentAt: new Date(),
+          errorMessage: msgMediaErrMsg,
         },
         update: {
           status: "SENT",
           dmSentAt: new Date(),
-          errorMessage: null,
+          errorMessage: msgMediaErrMsg,
         },
       });
     } catch (error) {
@@ -1255,6 +1339,53 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
   }
 }
 
+
+async function processTikTokMessage(job: Job<ProcessTikTokMessageJob>): Promise<void> {
+  const { tikTokAccountId, messageId, messageText, senderOpenId } = job.data;
+  const automations = await prisma.automation.findMany({
+    where: { dmTriggerEnabled: true, isActive: true, tikTokAccountId },
+    include: { tikTokAccount: true, workspace: true, trackedLinks: { select: { slug: true, label: true, destinationUrl: true }, orderBy: { createdAt: 'asc' } } },
+    orderBy: { createdAt: 'asc' },
+  });
+  const dedupeId = `tiktok:${messageId}`;
+  for (const automation of automations) {
+    const matchResult = automation.matchAnyWord ? { matched: true, matchedKeyword: null } : matchKeywords(messageText, automation.keywords, automation.wholeWordMatch);
+    if (!matchResult.matched) continue;
+    const existingLog = await prisma.dmLog.findUnique({ where: { automationId_commentId: { automationId: automation.id, commentId: dedupeId } } });
+    if (existingLog?.status === 'SENT' || existingLog?.status === 'SKIPPED_PLAN_LIMIT') continue;
+    const logBase = { workspaceId: automation.workspaceId, automationId: automation.id, tikTokAccountId: automation.tikTokAccountId ?? undefined, commenterId: senderOpenId, commentText: messageText, commentId: dedupeId, matchedKeyword: matchResult.matchedKeyword };
+    if (!automation.tikTokAccount?.accessToken) { await prisma.dmLog.upsert({ where: { automationId_commentId: { automationId: automation.id, commentId: dedupeId } }, create: { ...logBase, status: 'FAILED', errorMessage: 'No TikTok access token available' }, update: { status: 'FAILED', errorMessage: 'No TikTok access token available' } }); continue; }
+    let accessToken: string;
+    try { accessToken = decryptTikTokToken(automation.tikTokAccount.accessToken); } catch { await prisma.dmLog.upsert({ where: { automationId_commentId: { automationId: automation.id, commentId: dedupeId } }, create: { ...logBase, status: 'FAILED', errorMessage: 'Failed to decrypt TikTok access token' }, update: { status: 'FAILED', errorMessage: 'Failed to decrypt TikTok access token' } }); continue; }
+    const usage = await reserveWorkspaceDMSend(automation.workspaceId);
+    if (!usage.allowed) { await prisma.dmLog.upsert({ where: { automationId_commentId: { automationId: automation.id, commentId: dedupeId } }, create: { ...logBase, status: 'SKIPPED_PLAN_LIMIT', errorMessage: `Monthly DM limit reached (${usage.limit})` }, update: { status: 'SKIPPED_PLAN_LIMIT', errorMessage: `Monthly DM limit reached (${usage.limit})` } }); continue; }
+    try {
+      if (automation.trackedLinks.length === 0) {
+        await sendTikTokDirectMessage(accessToken, senderOpenId, renderMessageWithoutLink({ message: automation.dmMessage, commenterName: null }));
+      } else {
+        const bodyText = renderMessageWithoutLink({ message: automation.dmMessage, commenterName: null }) || "Here's your link:";
+        const firstLink = automation.trackedLinks[0];
+        try { await sendTikTokDirectMessageWithButton(accessToken, senderOpenId, bodyText, automation.linkButtonLabel || "Open link", buildTrackedUrl(firstLink.slug), `followcheck:${automation.id}`); } catch (buttonError) {
+          const msg = buttonError instanceof Error ? buttonError.message : String(buttonError);
+          if (/outside of allowed window/i.test(msg) || /invalid for a private reply/i.test(msg) || /requested user cannot be found/i.test(msg)) { throw buttonError; }
+          console.log('[DM Worker] TikTok button rejected, falling back to inline link:', msg);
+          try { await sendTikTokDirectMessage(accessToken, senderOpenId, `${bodyText}
+${buildTrackedUrl(firstLink.slug)}`); } catch { throw buttonError; }
+        }
+      }
+      if (automation.followUpEnabled && automation.followUpMessage?.trim()) {
+        const delayMs = Math.max(0, automation.followUpDelayMinutes ?? 0) * 60_000;
+        await getDMQueue().add(FOLLOWUP_JOB_NAME, { tikTokAccountId: automation.tikTokAccountId ?? undefined, userId: senderOpenId, automationId: automation.id, commenterName: null }, { delay: delayMs, jobId: `tiktok_followup_${automation.id}_${senderOpenId}` });
+      }
+      await prisma.dmLog.upsert({ where: { automationId_commentId: { automationId: automation.id, commentId: dedupeId } }, create: { ...logBase, status: 'SENT', dmSentAt: new Date() }, update: { status: 'SENT', dmSentAt: new Date() } });
+    } catch (error) {
+      await releaseWorkspaceDMReservation(automation.workspaceId, usage.periodStart);
+      await prisma.dmLog.upsert({ where: { automationId_commentId: { automationId: automation.id, commentId: dedupeId } }, create: { ...logBase, status: 'FAILED', attempts: job.attemptsMade + 1, errorMessage: error instanceof Error ? error.message : String(error) }, update: { status: 'FAILED', attempts: job.attemptsMade + 1, errorMessage: error instanceof Error ? error.message : String(error) } });
+      throw error;
+    }
+  }
+}
+
 async function processJob(job: Job<DmQueueJob>): Promise<void> {
   if (job.name === POSTBACK_JOB_NAME) {
     return processPostback(job as Job<ProcessPostbackJob>);
@@ -1264,6 +1395,9 @@ async function processJob(job: Job<DmQueueJob>): Promise<void> {
   }
   if (job.name === MESSAGE_JOB_NAME) {
     return processMessage(job as Job<ProcessMessageJob>);
+  if (job.name === TIKTOK_MESSAGE_JOB_NAME) {
+    return processTikTokMessage(job as Job<ProcessTikTokMessageJob>);
+  }
   }
   return processComment(job as Job<ProcessCommentJob>);
 }
@@ -1273,7 +1407,7 @@ async function recordWorkerFailure(
   error: Error
 ) {
   try {
-    const instagramAccountId = job?.data.instagramAccountId;
+    const instagramAccountId = "instagramAccountId" in (job?.data ?? {}) ? (job?.data as any).instagramAccountId : null;
     const commentId =
       job && "commentId" in job.data ? job.data.commentId : null;
     const account = instagramAccountId

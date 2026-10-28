@@ -38,17 +38,28 @@ export interface ProcessCommentJob {
 // Delivered when a user taps an opening DM's button — carries the reveal target.
 export interface ProcessPostbackJob {
   instagramAccountId: string;
+  tikTokAccountId?: string;
   userId: string;
   payload: string;
   mid?: string;
   fallback?: boolean;
 }
 
+// An inbound DM from a TikTok user. Campaigns with `dmTriggerEnabled` whose
+// keywords match the text reply to the sender.
+export interface ProcessTikTokMessageJob {
+  tikTokAccountId: string;
+  messageId: string;
+  messageText: string;
+  senderOpenId: string;
+}
+
 // Scheduled after the link is delivered, to send the appreciation follow-up.
 // Enqueued with a delay (followUpDelayMinutes) so it can fire later, not just
 // immediately.
 export interface ProcessFollowUpJob {
-  instagramAccountId: string;
+  instagramAccountId?: string;
+  tikTokAccountId?: string;
   userId: string;
   automationId: string;
   commenterName?: string | null;
@@ -67,11 +78,13 @@ export type DmQueueJob =
   | ProcessCommentJob
   | ProcessPostbackJob
   | ProcessFollowUpJob
-  | ProcessMessageJob;
+  | ProcessMessageJob
+  | ProcessTikTokMessageJob;
 
 export const POSTBACK_JOB_NAME = "process-postback";
 export const FOLLOWUP_JOB_NAME = "process-followup";
 export const MESSAGE_JOB_NAME = "process-message";
+export const TIKTOK_MESSAGE_JOB_NAME = "process-tiktok-message";
 
 let dmQueue: Queue<DmQueueJob> | null = null;
 

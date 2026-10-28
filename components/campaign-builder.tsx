@@ -192,7 +192,22 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
       setError(null);
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       audioChunksRef.current = [];
-      const mediaRecorder = new MediaRecorder(stream);
+
+      let mimeType = "audio/webm";
+      if (typeof MediaRecorder !== "undefined") {
+        if (MediaRecorder.isTypeSupported("audio/mp4")) {
+          mimeType = "audio/mp4";
+        } else if (MediaRecorder.isTypeSupported("audio/aac")) {
+          mimeType = "audio/aac";
+        } else if (MediaRecorder.isTypeSupported("audio/wav")) {
+          mimeType = "audio/wav";
+        }
+      }
+
+      const mediaRecorder = new MediaRecorder(
+        stream,
+        mimeType ? { mimeType } : undefined
+      );
       mediaRecorderRef.current = mediaRecorder;
 
       mediaRecorder.ondataavailable = (e) => {
@@ -202,8 +217,9 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
       };
 
       mediaRecorder.onstop = () => {
+        const recordedType = mediaRecorder.mimeType || mimeType;
         const audioBlob = new Blob(audioChunksRef.current, {
-          type: mediaRecorder.mimeType || "audio/webm",
+          type: recordedType,
         });
         setRecordedBlob(audioBlob);
         const url = URL.createObjectURL(audioBlob);
@@ -235,28 +251,6 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
   };
 
   const uploadFile = async (file: File | Blob, filename: string): Promise<string | null> => {
-    // 1. Try direct client upload to Catbox CDN to bypass Vercel 4.5MB serverless limit (especially for videos)
-    try {
-      const catboxForm = new FormData();
-      catboxForm.append("reqtype", "fileupload");
-      catboxForm.append("fileToUpload", file, filename);
-
-      const catboxRes = await fetch("https://catbox.moe/user/api.php", {
-        method: "POST",
-        body: catboxForm,
-      });
-
-      if (catboxRes.ok) {
-        const text = (await catboxRes.text()).trim();
-        if (text.startsWith("http://") || text.startsWith("https://")) {
-          return text;
-        }
-      }
-    } catch (e) {
-      console.warn("Direct CDN upload failed, falling back to /api/upload:", e);
-    }
-
-    // 2. Fallback to /api/upload
     const formData = new FormData();
     formData.append("file", file, filename);
     const res = await fetch("/api/upload", {
@@ -322,8 +316,16 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
     setUploadingAudio(true);
     setError(null);
     try {
-      const ext = recordedBlob.type.includes("mp4") ? "m4a" : "webm";
-      const url = await uploadFile(recordedBlob, `voice-recording.${ext}`);
+      let ext = "m4a";
+      if (recordedBlob.type.includes("mp4") || recordedBlob.type.includes("aac")) {
+        ext = "m4a";
+      } else if (recordedBlob.type.includes("wav")) {
+        ext = "wav";
+      }
+      const voiceFile = new File([recordedBlob], `voice-recording.${ext}`, {
+        type: recordedBlob.type.includes("webm") ? "audio/m4a" : recordedBlob.type,
+      });
+      const url = await uploadFile(voiceFile, `voice-recording.${ext}`);
       if (url) {
         setAudioUrl(url);
         setRecordedBlob(null);

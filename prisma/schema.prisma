@@ -78,6 +78,7 @@ model Workspace {
   members           WorkspaceMember[]
   invitations       WorkspaceInvitation[]
   instagramAccounts InstagramAccount[]
+  tikTokAccounts    TikTokAccount[]
   automations       Automation[]
   dmLogs            DmLog[]
   trackedLinks      TrackedLink[]
@@ -145,6 +146,29 @@ model InstagramAccount {
   @@index([workspaceId])
 }
 
+model TikTokAccount {
+  id              String   @id @default(cuid())
+  workspaceId     String
+  openId          String   @unique // TikTok user's open_id (app-scoped ID)
+  username        String
+  displayName     String?
+  avatarUrl       String?
+  accessToken     String
+  refreshToken    String?
+  expiresIn       Int?     // seconds until expiry
+  tokenExpiresAt  DateTime?
+  scope           String?
+  webhookSubscribed Boolean @default(false)
+  connectedAt     DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  workspace  Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  automations Automation[]
+  dmLogs     DmLog[]
+
+  @@index([workspaceId])
+}
+
 /// Daily follower total for one account. Instagram only retains ~30 days of
 /// account insights, so history beyond that window exists only because we
 /// record it here. One row per account per day.
@@ -168,7 +192,8 @@ model FollowerSnapshot {
 model Automation {
   id                 String   @id @default(cuid())
   workspaceId        String
-  instagramAccountId String
+  instagramAccountId String?
+  tikTokAccountId    String?
 
   name           String
   goal           String?
@@ -209,14 +234,16 @@ model Automation {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  workspace        Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  instagramAccount InstagramAccount @relation(fields: [instagramAccountId], references: [id], onDelete: Cascade)
+  workspace        Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  instagramAccount InstagramAccount?   @relation(fields: [instagramAccountId], references: [id], onDelete: Cascade)
+  tikTokAccount    TikTokAccount?      @relation(fields: [tikTokAccountId], references: [id], onDelete: Cascade)
   dmLogs           DmLog[]
   trackedLinks     TrackedLink[]
   linkClicks       LinkClick[]
 
   @@index([workspaceId])
   @@index([instagramAccountId])
+  @@index([tikTokAccountId])
   @@index([postId])
 }
 
@@ -224,7 +251,8 @@ model DmLog {
   id                 String     @id @default(cuid())
   workspaceId        String
   automationId       String
-  instagramAccountId String
+  instagramAccountId String?
+  tikTokAccountId    String?
 
   commenterId   String
   commenterName String?
@@ -247,12 +275,14 @@ model DmLog {
 
   workspace        Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   automation       Automation       @relation(fields: [automationId], references: [id], onDelete: Cascade)
-  instagramAccount InstagramAccount @relation(fields: [instagramAccountId], references: [id], onDelete: Cascade)
+  instagramAccount InstagramAccount? @relation(fields: [instagramAccountId], references: [id], onDelete: Cascade)
+  tikTokAccount    TikTokAccount?    @relation(fields: [tikTokAccountId], references: [id], onDelete: Cascade)
 
   @@unique([automationId, commentId])
   @@index([workspaceId])
   @@index([automationId])
   @@index([instagramAccountId])
+  @@index([tikTokAccountId])
   @@index([status])
 }
 
