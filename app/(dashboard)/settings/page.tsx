@@ -219,6 +219,23 @@ export default function SettingsPage() {
       </section>
 
       <section className="panel rounded p-4 sm:p-6">
+        <h2 className="text-base font-semibold mb-6">TikTok Connection</h2>
+        <div className="space-y-4">
+          <p className="text-sm text-muted">
+            Connect a TikTok Business account to enable DM automation on TikTok.
+          </p>
+          <div className="mt-4 pt-4 border-t border-border flex gap-3">
+            <a
+              href="/api/tiktok/connect"
+              className="px-4 py-2 rounded text-sm font-medium transition-colors bg-accent text-white hover:bg-accent-hover"
+            >
+              Connect TikTok
+            </a>
+          </div>
+        </div>
+      </section>
+
+      <section className="panel rounded p-4 sm:p-6">
         <h2 className="text-base font-semibold mb-6">Team</h2>
         <div className="space-y-3">
           {membersData?.members.map((member) => (
