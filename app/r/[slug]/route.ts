@@ -31,7 +31,7 @@ export async function GET(request: NextRequest, { params }: RedirectRouteProps) 
     data: {
       workspaceId: trackedLink.workspaceId,
       automationId: trackedLink.automationId,
-      instagramAccountId: trackedLink.automation.instagramAccountId,
+      instagramAccountId: trackedLink.automation.instagramAccountId!,
       trackedLinkId: trackedLink.id,
       ipHash: hashClickIp(getRequestIp(request)),
       userAgent: request.headers.get("user-agent"),

@@ -89,7 +89,9 @@ export async function reconcileComments(): Promise<void> {
   const tokenCache = new Map<string, string | null>();
 
   for (const automation of automations) {
-    const stat = await sweepCampaign(automation, sinceMs, tokenCache).catch(
+    if (!automation.instagramAccount) return;
+    if (!automation.instagramAccount) return;
+    const stat = await sweepCampaign(automation as any, sinceMs, tokenCache).catch(
       (error): SweepStat => ({
         campaign: automation.name,
         keywords: automation.keywords.join(","),

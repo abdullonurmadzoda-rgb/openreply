@@ -40,6 +40,11 @@ export async function GET(request: NextRequest) {
   >();
   for (const automation of pending) {
     const key = automation.instagramAccountId;
+
+    if (!key) {
+      continue;
+    }
+
     const entry = byAccount.get(key);
     if (entry) entry.automations.push(automation);
     else byAccount.set(key, { account: automation.instagramAccount, automations: [automation] });
