@@ -90,6 +90,20 @@ export async function POST(request: NextRequest) {
         select: { workspaceId: true },
       });
 
+      // Dedup: skip if this comment was already queued/processed
+      const alreadyProcessed = await prisma.processedComment.findUnique({
+        where: { commentId: event.commentId },
+      });
+      if (alreadyProcessed) continue;
+
+      await prisma.processedComment.create({
+        data: {
+          instagramAccountId: event.instagramAccountId,
+          commentId: event.commentId,
+          source: "WEBHOOK",
+        },
+      }).catch(() => {});
+
       await queue.add(
         "process-comment",
         {

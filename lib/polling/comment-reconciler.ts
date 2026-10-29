@@ -238,15 +238,35 @@ async function sweepCampaign(
       // drop this add, so the comment would never be retried. Dedup is handled
       // above (owner-reply + DmLog guards) and the worker is idempotent
       // (publicReplySentAt / SENT), so re-processing a comment is safe.
-      await queue.add("process-comment", {
-        instagramAccountId: account.instagramId,
-        commentId: c.id,
-        commentText: c.text ?? "",
-        commenterId: c.from!.id,
-        commenterName: c.from?.username,
-        mediaId,
-        source: "POLLING",
+      // Dedup: skip if already queued/processed
+      const alreadyProcessed = await prisma.processedComment.findUnique({
+        where: { commentId: c.id },
       });
+      if (alreadyProcessed) continue;
+
+      await prisma.processedComment.create({
+        data: {
+          instagramAccountId: account.instagramId,
+          commentId: c.id,
+          source: "POLLING",
+        },
+      }).catch(() => {});
+
+      await queue.add(
+        "process-comment",
+        {
+          instagramAccountId: account.instagramId,
+          commentId: c.id,
+          commentText: c.text ?? "",
+          commenterId: c.from!.id,
+          commenterName: c.from?.username,
+          mediaId,
+          source: "POLLING",
+        },
+        {
+          jobId: `comment_${account.instagramId}_${c.id}`,
+        }
+      );
       stat.enqueued += 1;
     }
   }
