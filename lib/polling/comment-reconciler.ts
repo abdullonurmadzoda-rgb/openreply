@@ -68,6 +68,7 @@ export async function reconcileComments(): Promise<void> {
       id: true,
       name: true,
       postId: true,
+      postIds: true,
       matchAnyPost: true,
       matchAnyWord: true,
       keywords: true,
@@ -110,6 +111,7 @@ async function sweepCampaign(
     id: string;
     name: string;
     postId: string | null;
+    postIds: string[];
     matchAnyPost: boolean;
     matchAnyWord: boolean;
     keywords: string[];
@@ -157,7 +159,11 @@ async function sweepCampaign(
   const mediaIds: string[] = [];
   if (automation.postId) {
     mediaIds.push(automation.postId);
-  } else if (automation.matchAnyPost) {
+  }
+  if (automation.postIds && automation.postIds.length > 0) {
+    mediaIds.push(...automation.postIds);
+  }
+  if (mediaIds.length === 0 && automation.matchAnyPost) {
     try {
       const media = await getUserMedia(accessToken, RECENT_MEDIA_LIMIT);
       mediaIds.push(...media.map((m) => m.id));

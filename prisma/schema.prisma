@@ -198,6 +198,7 @@ model Automation {
   name           String
   goal           String?
   postId         String?
+  postIds        String[] @default([])
   postUrl        String?
   pendingNextReel Boolean @default(false)
   matchAnyPost   Boolean @default(false)
